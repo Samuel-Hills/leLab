@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -44,6 +46,40 @@ def test_handle_stop_recording_when_idle_returns_dict(tmp_lerobot_home) -> None:
 
     result = handle_stop_recording()
     assert isinstance(result, dict)
+
+
+def test_cleanup_empty_recording_dataset_removes_new_dataset(tmp_path) -> None:
+    from lelab.record import _cleanup_empty_recording_dataset
+
+    root = tmp_path / "local" / "empty"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta" / "info.json").write_text("{}")
+
+    _cleanup_empty_recording_dataset(SimpleNamespace(root=root), resume=False, num_saved_episodes=0)
+
+    assert not root.exists()
+
+
+@pytest.mark.parametrize(
+    ("resume", "num_saved_episodes"),
+    [(True, 0), (False, 1)],
+)
+def test_cleanup_empty_recording_dataset_preserves_existing_data(
+    tmp_path, resume: bool, num_saved_episodes: int
+) -> None:
+    from lelab.record import _cleanup_empty_recording_dataset
+
+    root = tmp_path / "local" / "dataset"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta" / "info.json").write_text("{}")
+
+    _cleanup_empty_recording_dataset(
+        SimpleNamespace(root=root),
+        resume=resume,
+        num_saved_episodes=num_saved_episodes,
+    )
+
+    assert root.exists()
 
 
 def test_create_record_config_pins_dshow_on_windows(monkeypatch: pytest.MonkeyPatch) -> None:

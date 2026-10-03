@@ -359,6 +359,28 @@ def handle_start_recording(request: RecordingRequest) -> dict[str, Any]:
         return {"success": False, "message": f"Failed to start recording: {str(e)}"}
 
 
+def _cleanup_empty_recording_dataset(
+    dataset: LeRobotDataset, *, resume: bool, num_saved_episodes: int
+) -> None:
+    """Remove a newly created dataset when a recording saved no episodes."""
+    if resume or num_saved_episodes:
+        return
+
+    from pathlib import Path
+
+    root = Path(dataset.root).resolve()
+    if not (root / "meta" / "info.json").is_file():
+        logger.warning("Refusing to remove incomplete dataset directory %s", root)
+        return
+
+    try:
+        shutil.rmtree(root)
+    except OSError as exc:
+        logger.warning("Could not remove empty recording dataset %s: %s", root, exc)
+    else:
+        logger.info("Removed empty recording dataset %s", root)
+
+
 def handle_stop_recording() -> dict[str, Any]:
     """Handle stop recording request - replaces ESC key"""
     global current_phase, phase_start_time
@@ -978,6 +1000,11 @@ def record_with_web_events(cfg: RecordConfig, web_events: dict) -> LeRobotDatase
             safe_disconnect_device(robot, logger, context="recording cleanup")
             if teleop:
                 safe_disconnect_device(teleop, logger, context="recording cleanup")
+            _cleanup_empty_recording_dataset(
+                dataset,
+                resume=cfg.resume,
+                num_saved_episodes=saved_episodes,
+            )
 
     if cfg.dataset.push_to_hub:
         if dataset.num_episodes > 0:
