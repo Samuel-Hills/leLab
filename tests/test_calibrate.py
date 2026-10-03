@@ -15,6 +15,10 @@
 
 from __future__ import annotations
 
+import threading
+import time
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -125,3 +129,35 @@ def test_cleanup_device_force_releases_and_clears_when_disconnect_fails() -> Non
 
     assert device.bus.port_handler.closed is True  # force-released despite failure
     assert mgr.device is None  # handle cleared so a new calibration can start
+
+
+def test_position_reads_are_serialized() -> None:
+    """Concurrent status and recording reads must not share the serial bus."""
+    from lelab.calibrate import CalibrationManager
+
+    active_reads = 0
+    overlapping_reads = False
+    state_lock = threading.Lock()
+
+    class Bus:
+        def sync_read(self, name: str, *, normalize: bool) -> dict[str, int]:
+            nonlocal active_reads, overlapping_reads
+            with state_lock:
+                active_reads += 1
+                overlapping_reads |= active_reads > 1
+
+            time.sleep(0.02)
+
+            with state_lock:
+                active_reads -= 1
+            return {"shoulder_pan": 2000}
+
+    manager = CalibrationManager()
+    manager.device = SimpleNamespace(bus=Bus())
+    threads = [threading.Thread(target=manager._read_positions) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert overlapping_reads is False

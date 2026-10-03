@@ -111,6 +111,7 @@ class CalibrationManager:
         self._status_lock = threading.Lock()
         self._step_complete = threading.Event()
         self._recording_active = False
+        self._bus_lock = threading.Lock()
         self._start_positions = {}
         self._mins = {}
         self._maxes = {}
@@ -130,7 +131,7 @@ class CalibrationManager:
                     positions = None
                     for attempt in range(2):  # Quick retry for status updates
                         try:
-                            positions = self.device.bus.sync_read("Present_Position", normalize=False)
+                            positions = self._read_positions()
                             break
                         except Exception as read_error:
                             if "Port is in use" in str(read_error) and attempt < 1:
@@ -167,6 +168,14 @@ class CalibrationManager:
                         logger.warning(f"Failed to read positions: {e}")
 
             return self.status
+
+    def _read_positions(self) -> dict[str, Any]:
+        """Read motor positions without allowing concurrent bus transactions."""
+        if self.device is None:
+            raise RuntimeError("No calibration device is connected")
+
+        with self._bus_lock:
+            return self.device.bus.sync_read("Present_Position", normalize=False)
 
     def _update_status(self, **kwargs):
         """Update calibration status thread-safely"""
@@ -351,7 +360,7 @@ class CalibrationManager:
             self.device.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
 
         self.device.bus.reset_calibration()
-        actual_positions = self.device.bus.sync_read("Present_Position", normalize=False)
+        actual_positions = self._read_positions()
         logger.info(f"Current positions for homing: {actual_positions}")
 
         self._homing_offsets = self.device.bus._get_half_turn_homings(actual_positions)
@@ -368,7 +377,7 @@ class CalibrationManager:
         self._start_positions = {}
         for attempt in range(5):  # Try multiple times to get valid initial positions
             try:
-                positions = self.device.bus.sync_read("Present_Position", normalize=False)
+                positions = self._read_positions()
                 # Validate initial positions
                 valid_positions = {}
                 for motor, pos in positions.items():
@@ -415,7 +424,7 @@ class CalibrationManager:
                 positions = None
                 for attempt in range(3):  # Try up to 3 times
                     try:
-                        positions = self.device.bus.sync_read("Present_Position", normalize=False)
+                        positions = self._read_positions()
                         break  # Success, exit retry loop
                     except Exception as read_error:
                         if "Port is in use" in str(read_error) and attempt < 2:
